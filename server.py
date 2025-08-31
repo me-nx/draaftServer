@@ -10,6 +10,7 @@ import hashlib
 import time
 import hmac
 import random
+from fastapi.middleware.cors import CORSMiddleware
 
 # https://pyjwt.readthedocs.io/en/stable/
 # https://sessionserver.mojang.com/session/minecraft/hasJoined?username=DesktopFolder&serverId=draaft2025server
@@ -82,13 +83,22 @@ async def authenticate(mi: MojangInfo) -> AuthenticationResult:
 
 @app.middleware("http")
 async def check_valid(request: Request, call_next):
+    request.state.valid_token = None
     if request.url.path != '/authenticate':
         x = request.headers.get("token")
         if x is None or x not in database:
             return PlainTextResponse("bad request, sorry mate", status_code=403)
+        request.state.valid_token = x
 
     return await call_next(request)
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=('*'),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 class Room(BaseModel):
     code: str
@@ -101,6 +111,17 @@ rooms = {
 def room_code():
     return ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(7))
 
+@app.get("/authenticated")
+async def is_authenticated():
+    return True
+
 @app.get("/room/create")
 async def create_room():
     return room_code()
+
+@app.get("/user")
+async def get_user(request: Request) -> LoggedInUser:
+    token = request.state.valid_token
+    assert token is not None
+    assert token in database
+    return database[token]
