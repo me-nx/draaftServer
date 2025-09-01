@@ -1,6 +1,7 @@
-from typing import Annotated
-from fastapi import FastAPI, Form, HTTPException, Header, Request, Response
+from typing import Annotated, Awaitable, Callable, Any, Coroutine, TypeVar
+from fastapi import FastAPI, Form, HTTPException, Header, Request, Response, status
 from fastapi.responses import PlainTextResponse, HTMLResponse
+from enum import Enum
 from pydantic import BaseModel
 import re
 import aiohttp
@@ -146,22 +147,96 @@ app.add_middleware(
 
 class Room(BaseModel):
     code: str
-    members: list[str]
+    members: set[str]
 
-rooms = {
+    # Room creator UUID
+    admin: str
+
+rooms: dict[str, Room] = {
     
 }
 
-def room_code():
-    return ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(7))
+class RoomManager:
+    def __init__(self):
+        pass
+
+def room_code() -> str:
+    result = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(7))
+    # Surely this will never infinitely loop haha
+    if result in rooms:
+        return room_code()
+    return result
 
 @app.get("/authenticated")
 async def is_authenticated():
     return True
 
+class RoomJoinState(str, Enum):
+    created = "created"
+    rejoined = "rejoined"
+    rejoined_as_admin = "rejoined_as_admin"
+    joined = "joined"
+
+class RoomIdentifier(BaseModel):
+    code: str
+
+class RoomResult(RoomIdentifier):
+    state: RoomJoinState
+
+class APIError(BaseModel):
+    error_message: str
+
+class RoomJoinError(APIError):
+    pass
+
+APIErrorType = TypeVar('APIErrorType')
+def api_error(error: APIErrorType, response: Response, code=status.HTTP_400_BAD_REQUEST) -> APIErrorType:
+    response.status_code = code
+    return error
+
+async def handle_room_rejoin(u: LoggedInUser, cb: Callable[[], Coroutine[Any, Any, RoomResult]]) -> RoomResult | None:
+    if u.room is not None:
+        if u.room not in rooms:
+            # Handle room timeout / deletion
+            u.room = None
+            return await cb()
+        room = rooms[u.room]
+        if u.uuid == room.admin:
+            return RoomResult(code=room.code, state=RoomJoinState.rejoined_as_admin)
+        return RoomResult(code=room.code, state=RoomJoinState.rejoined)
+    return None
+
+@app.get("/room")
+async def get_room(request: Request, response: Response) -> Room | APIError:
+    u = await get_user(request)
+    if u.room is None or u.room not in rooms:
+        return api_error(APIError(error_message="no room found for user"), response, status.HTTP_404_NOT_FOUND)
+    return rooms[u.room]
+
 @app.get("/room/create")
-async def create_room():
-    return room_code()
+async def create_room(request: Request) -> RoomResult:
+    # The user must be authenticated to get this.
+    # Only create a room if the user is not already joined to a room.
+    u = await get_user(request)
+    rejoin_result = await handle_room_rejoin(u, lambda: create_room(request))
+    if rejoin_result is not None:
+        return rejoin_result
+    new_code = room_code()
+    rooms[new_code] = Room(code=new_code, members={u.uuid}, admin=u.uuid)
+    return RoomResult(code=new_code, state=RoomJoinState.created)
+
+@app.post("/room/join")
+async def join_room(request: Request, response: Response, room_id: RoomIdentifier) -> RoomResult | RoomJoinError:
+    u = await get_user(request)
+    rejoin_result = await handle_room_rejoin(u, lambda: create_room(request))
+    if rejoin_result is not None:
+        return rejoin_result
+    if room_id.code not in rooms:
+        return api_error(RoomJoinError(error_message=f"no such room: {room_id.code}"), response)
+    # User can join this room!
+    u.room = room_id.code 
+    rooms[room_id.code].members.add(u.uuid)
+    return RoomResult(code=room_id.code, state=RoomJoinState.joined)
 
 @app.get("/user")
 async def get_user(request: Request) -> LoggedInUser:
