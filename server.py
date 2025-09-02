@@ -91,46 +91,6 @@ async def authenticate(mi: MojangInfo) -> AuthenticationResult:
     return AuthenticationSuccess(token=token)
 
 
-class AuthenticateAppForm(BaseModel):
-    token: str
-
-
-@app.post("/authenticate-app", response_class=HTMLResponse)
-async def authenticate_app(form: Annotated[AuthenticateAppForm, Form()], request: Request, response: Response):
-    origin = request.headers.get('origin')
-
-    if origin is not None and re.match(r"^https?://localhost:\d{1,5}$", origin) is not None:
-        response.headers.append('Access-Control-Allow-Origin', origin)
-
-    if jwt.decode(form.token, JWT_SECRET, algorithms=[JWT_ALGORITHM]) is None:
-        return Response(status_code=400, content="invalid token")
-
-    return f"""
-    <!DOCTYPE html>
-    <html>
-        <head>
-            <title>Redirecting...</title>
-            <script>
-                window.localStorage.setItem('draaft.token', '{form.token}');
-                const url = new URL(window.location.href);
-                url.pathname = '/';
-                window.location.replace(url);
-            </script>
-        </head>
-        <body>
-            <h1>Redirecting...</h1>
-        </body>
-    </html>
-    """
-
-
-@app.get('/', response_class=HTMLResponse)
-async def temp_index():
-    return '''
-    hello world
-    '''
-
-
 @app.middleware("http")
 async def check_valid(request: Request, call_next):
     request.state.valid_token = None
@@ -138,7 +98,8 @@ async def check_valid(request: Request, call_next):
     public_routes = {
         '/',
         '/authenticate',
-        '/authenticate-app'
+        "/docs",
+        "/openapi.json",
     }
 
     if request.url.path not in public_routes:
