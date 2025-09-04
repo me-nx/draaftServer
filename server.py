@@ -1,6 +1,7 @@
 import json
 import random
 import re
+import secrets
 import string
 import time
 from enum import Enum
@@ -13,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel
 
-JWT_SECRET = "SECRET_THAT_SHOULD_BE_ENV_VAR"
+JWT_SECRET = secrets.token_urlsafe(32)
 JWT_ALGORITHM = "HS256"
 
 # https://pyjwt.readthedocs.io/en/stable/
@@ -47,11 +48,6 @@ class LoggedInUser(BaseModel):
     serverID: str
 
     room: str | None = None
-
-
-database: dict[str, LoggedInUser] = {
-
-}
 
 
 class MojangInfo(BaseModel):
@@ -92,9 +88,6 @@ async def authenticate(mi: MojangInfo) -> AuthenticationResult:
         "exp": int(time.time()) + 60 * 60 * 24  # 24 hours expiry
     }
     token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
-    user = LoggedInUser(
-        username=respdata['name'], uuid=respdata['id'], serverID=mi.serverID, token=token)
-    database[token] = user
     return AuthenticationSuccess(token=token)
 
 
@@ -154,17 +147,13 @@ async def check_valid(request: Request, call_next):
             return PlainTextResponse("bad request, sorry mate", status_code=403)
         try:
             payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-            # Optionally, check if user exists in database
-            if token not in database:
-                # Optionally, auto-add user from payload if not present
-                user = LoggedInUser(
-                    username=payload["username"], uuid=payload["uuid"], serverID=payload["serverID"])
-                database[token] = user
         except jwt.ExpiredSignatureError:
             return PlainTextResponse("token expired", status_code=403)
         except jwt.InvalidTokenError:
             return PlainTextResponse("invalid token", status_code=403)
         request.state.valid_token = token
+        request.state.logged_in_user = LoggedInUser(
+            username=payload["username"], uuid=payload["uuid"], serverID=payload["serverID"], token=token)
 
     return await call_next(request)
 
@@ -292,5 +281,5 @@ async def join_room(request: Request, response: Response, room_id: RoomIdentifie
 async def get_user(request: Request) -> LoggedInUser:
     token = request.state.valid_token
     assert token is not None
-    assert token in database
-    return database[token]
+    assert hasattr(request.state, 'logged_in_user')
+    return request.state.logged_in_user
