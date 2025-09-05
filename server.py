@@ -6,6 +6,10 @@ import string
 import time
 from enum import Enum
 from typing import Annotated, Any, Callable, Coroutine, TypeVar
+from db import setup_sqlite, cur
+import db
+from model import LoggedInUser
+import rooms
 
 import aiohttp
 import jwt
@@ -13,6 +17,8 @@ from fastapi import FastAPI, Form, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel
+
+setup_sqlite()
 
 JWT_SECRET = secrets.token_urlsafe(32)
 JWT_ALGORITHM = "HS256"
@@ -39,15 +45,6 @@ def getSessionCheckURI(username: str, serverId: str) -> str | None:
 
 
 app = FastAPI()
-
-
-class LoggedInUser(BaseModel):
-    username: str
-    uuid: str
-    token: str
-    serverID: str
-
-    room: str | None = None
 
 
 class MojangInfo(BaseModel):
@@ -87,6 +84,7 @@ async def authenticate(mi: MojangInfo) -> AuthenticationResult:
         "iat": int(time.time()),
         "exp": int(time.time()) + 60 * 60 * 24  # 24 hours expiry
     }
+
     token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
     return AuthenticationSuccess(token=token)
 
@@ -113,8 +111,7 @@ async def check_valid(request: Request, call_next):
         except jwt.InvalidTokenError:
             return PlainTextResponse("invalid token", status_code=403)
         request.state.valid_token = token
-        request.state.logged_in_user = LoggedInUser(
-            username=payload["username"], uuid=payload["uuid"], serverID=payload["serverID"], token=token)
+        request.state.logged_in_user = db.get_user(username=payload["username"], uuid=payload["uuid"])
 
     return await call_next(request)
 
@@ -133,25 +130,6 @@ class Room(BaseModel):
 
     # Room creator UUID
     admin: str
-
-
-rooms: dict[str, Room] = {
-
-}
-
-
-class RoomManager:
-    def __init__(self):
-        pass
-
-
-def room_code() -> str:
-    result = ''.join(random.choice(string.ascii_uppercase +
-                     string.digits) for _ in range(7))
-    # Surely this will never infinitely loop haha
-    if result in rooms:
-        return room_code()
-    return result
 
 
 @app.get("/authenticated")
@@ -219,8 +197,8 @@ async def create_room(request: Request) -> RoomResult:
     rejoin_result = await handle_room_rejoin(u, lambda: create_room(request))
     if rejoin_result is not None:
         return rejoin_result
-    new_code = room_code()
-    rooms[new_code] = Room(code=new_code, members={u.uuid}, admin=u.uuid)
+    new_code = rooms.code()
+    rooms.create(new_code, u.uuid)
     return RoomResult(code=new_code, state=RoomJoinState.created)
 
 

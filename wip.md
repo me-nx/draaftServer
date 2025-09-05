@@ -8,6 +8,7 @@ Flow:
 Misc Things:
 
 - Add heartbeat / timeout to websocket connection
+- https://stackoverflow.com/questions/60098005/fastapi-starlette-get-client-real-ip
 
 Rejoin Flow (user is already in a room):
 
