@@ -25,7 +25,7 @@ def create(uuid: str) -> str:
             return room_code
         except IntegrityError:
             # Duplicate code, try again
-            # Not sure if the is needed as the collison space in 36^7 (78 billion possible codes)
+            # Not sure if this is needed as the collision space in 36^7 (78 billion possible codes)
             continue
 
 
@@ -48,11 +48,6 @@ def get_room_from_code(room_code: str) -> Room | None:
 
 def add_room_member(room_code: str, uuid: str) -> bool:
     """ Adds a user to a room by room code. Returns True on success, False on failure (room not found or other db issue) """
-    res = cur.execute(
-        "SELECT id FROM rooms WHERE code = ?", (room_code,)).fetchall()
-    if not res:
-        return False
-    room_code = res[0][0]
     try:
         cur.execute("UPDATE users SET room_code = ? WHERE uuid = ?",
                     (room_code, uuid))

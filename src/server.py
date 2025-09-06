@@ -18,7 +18,7 @@ from utils import get_user_from_request, validate_mojang_session
 
 setup_sqlite()
 
-JWT_SECRET = "testsecret"
+JWT_SECRET = secrets.token_urlsafe(32)
 JWT_ALGORITHM = "HS256"
 
 # https://pyjwt.readthedocs.io/en/stable/
@@ -74,12 +74,12 @@ async def authenticate(mi: MojangInfo) -> AuthenticationResult:
     result = await validate_mojang_session(mi.username, mi.serverID)
     if not result["success"]:
         return AuthenticationFailure(message=result["error"])
-    respdata = result["data"]
+    resp_data = result["data"]
 
     # JWT payload
     payload = {
-        "username": respdata['name'],
-        "uuid": respdata['id'],
+        "username": resp_data['name'],
+        "uuid": resp_data['id'],
         "serverID": mi.serverID,
         "iat": int(time.time()),
         "exp": int(time.time()) + 60 * 60 * 24  # 24 hours expiry
@@ -87,7 +87,7 @@ async def authenticate(mi: MojangInfo) -> AuthenticationResult:
 
     token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
     # add user to db if not exists
-    insert_user(username=respdata['name'], uuid=respdata['id'])
+    insert_user(username=resp_data['name'], uuid=resp_data['id'])
     return AuthenticationSuccess(token=token)
 
 
