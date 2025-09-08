@@ -1,6 +1,8 @@
 from enum import Enum
 from pydantic import BaseModel
 
+from models.api import APIError
+
 
 class Room(BaseModel):
     code: str
@@ -23,10 +25,6 @@ class RoomIdentifier(BaseModel):
 
 class RoomResult(RoomIdentifier):
     state: RoomJoinState
-
-
-class APIError(BaseModel):
-    error_message: str
 
 
 class RoomJoinError(APIError):

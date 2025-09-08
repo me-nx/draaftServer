@@ -3,7 +3,7 @@ import string
 import random
 from sqlite3 import IntegrityError
 
-from models.room_model import Room
+from models.room import Room
 from db import DB
 
 

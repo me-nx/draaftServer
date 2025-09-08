@@ -11,6 +11,10 @@ class AuthenticationFailure(BaseModel):
     message: str
 
 
+class APIError(BaseModel):
+    error_message: str
+
+
 APIErrorType = TypeVar('APIErrorType')
 
 

@@ -9,11 +9,12 @@ from fastapi.responses import PlainTextResponse
 
 import db
 import rooms
-from db import setup_sqlite
-from models.api_model import APIErrorType, AuthenticationFailure, AuthenticationResult, AuthenticationSuccess, api_error
-from models.room_model import APIError, Room, RoomIdentifier, RoomJoinError, RoomJoinState, RoomResult
-from models.model import LoggedInUser, MojangInfo
-from db import insert_user
+from db import insert_user, setup_sqlite
+from models.api import (APIError, APIErrorType, AuthenticationFailure,
+                        AuthenticationResult, AuthenticationSuccess, api_error)
+from models.generic import LoggedInUser, MojangInfo
+from models.room import (Room, RoomIdentifier, RoomJoinError, RoomJoinState,
+                         RoomResult)
 from utils import get_user_from_request, validate_mojang_session
 
 setup_sqlite()

@@ -2,7 +2,7 @@ import re
 import aiohttp
 import json
 
-from models.model import LoggedInUser
+from models.generic import LoggedInUser
 
 
 async def validate_mojang_session(username: str, serverID: str):

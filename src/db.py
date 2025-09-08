@@ -1,6 +1,6 @@
 import sqlite3
 
-from models.model import LoggedInUser
+from models.generic import LoggedInUser
 
 DB = sqlite3.connect("./db/draaft.db")
 cur = DB.cursor()
@@ -53,11 +53,13 @@ def insert_user(username: str, uuid: str) -> bool:
         return False
 
 
-def get_user(username: str, uuid: str):
+def get_user(username: str, uuid: str) -> LoggedInUser | None:
+    """ Gets a user by UUID. If the user does not exist, it is created. """
     # TODO - update username if changed or be dynamic elsewhere
     res = cur.execute("SELECT * FROM users WHERE uuid = ?", (uuid,)).fetchall()
     if not res:
-        insert_user(username, uuid)
+        if not insert_user(username, uuid):
+            return None
         return get_user(username, uuid)
     _, uuid, username, room_code = res[0]
     return LoggedInUser(username=username, uuid=uuid, room_code=room_code)
