@@ -16,11 +16,16 @@ from models.generic import LoggedInUser, MojangInfo
 from models.room import (Room, RoomIdentifier, RoomJoinError, RoomJoinState,
                          RoomResult)
 from utils import get_user_from_request, validate_mojang_session
+import sys
 
 setup_sqlite()
 
 JWT_SECRET = secrets.token_urlsafe(32)
 JWT_ALGORITHM = "HS256"
+DEV_MODE_NO_AUTHENTICATE = True
+
+if DEV_MODE_NO_AUTHENTICATE and 'dev' not in sys.argv:
+    raise RuntimeError(f'Do not deploy without setting dev mode to False!')
 
 # https://pyjwt.readthedocs.io/en/stable/
 # https://sessionserver.mojang.com/session/minecraft/hasJoined?username=DesktopFolder&serverId=draaft2025server
@@ -70,26 +75,43 @@ app.add_middleware(
 
 ################### Routes #####################
 
-@app.post("/authenticate")
-async def authenticate(mi: MojangInfo) -> AuthenticationResult:
-    result = await validate_mojang_session(mi.username, mi.serverID)
-    if not result["success"]:
-        return AuthenticationFailure(message=result["error"])
-    resp_data = result["data"]
+if DEV_MODE_NO_AUTHENTICATE:
+    @app.get("/authenticate")
+    async def authenticate_no_auth() -> AuthenticationResult:
+        # JWT payload
+        payload = {
+            "username": 'TesterName',
+            "uuid": 'uuid1a52730a4b4dadb7d1ea69617f3e',
+            "serverID": 'draaftServerID',
+            "iat": int(time.time()),
+            "exp": int(time.time()) + 60 * 60 * 24  # 24 hours expiry
+        }
 
-    # JWT payload
-    payload = {
-        "username": resp_data['name'],
-        "uuid": resp_data['id'],
-        "serverID": mi.serverID,
-        "iat": int(time.time()),
-        "exp": int(time.time()) + 60 * 60 * 24  # 24 hours expiry
-    }
+        token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+        # add user to db if not exists
+        insert_user(username=payload['username'], uuid=payload['uuid'])
+        return AuthenticationSuccess(token=token)
+else:
+    @app.post("/authenticate")
+    async def authenticate(mi: MojangInfo) -> AuthenticationResult:
+        result = await validate_mojang_session(mi.username, mi.serverID)
+        if not result["success"]:
+            return AuthenticationFailure(message=result["error"])
+        resp_data = result["data"]
 
-    token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
-    # add user to db if not exists
-    insert_user(username=resp_data['name'], uuid=resp_data['id'])
-    return AuthenticationSuccess(token=token)
+        # JWT payload
+        payload = {
+            "username": resp_data['name'],
+            "uuid": resp_data['id'],
+            "serverID": mi.serverID,
+            "iat": int(time.time()),
+            "exp": int(time.time()) + 60 * 60 * 24  # 24 hours expiry
+        }
+
+        token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+        # add user to db if not exists
+        insert_user(username=resp_data['name'], uuid=resp_data['id'])
+        return AuthenticationSuccess(token=token)
 
 
 @app.get("/authenticated")
@@ -116,11 +138,14 @@ async def handle_room_rejoin(user: LoggedInUser, cb: Callable[[], Coroutine[Any,
 async def get_room(request: Request, response: Response) -> Room | APIError:
     print("Getting room for user...")
     user = get_user_from_request(request)
+    assert user
     print(f"Got user: {user}")
+    if user.room_code is None:
+        return api_error(APIError(error_message="no room code found for user"), response, status.HTTP_404_NOT_FOUND)
     room = rooms.get_room_from_code(user.room_code)
     print(f"Got room: {room}")
     if room is None:
-        return api_error(APIError(error_message="no room found for user"), response, status.HTTP_404_NOT_FOUND)
+        return api_error(APIError(error_message="no room found for user's room code"), response, status.HTTP_404_NOT_FOUND)
     return room
 
 
@@ -129,6 +154,7 @@ async def create_room(request: Request) -> RoomResult:
     # The user must be authenticated to get this.
     # Only create a room if the user is not already joined to a room.
     user = get_user_from_request(request)
+    assert user
     rejoin_result = await handle_room_rejoin(user, lambda: create_room(request))
     if rejoin_result is not None:
         return rejoin_result
@@ -139,6 +165,7 @@ async def create_room(request: Request) -> RoomResult:
 @app.post("/room/join")
 async def join_room(request: Request, response: Response, room_code: RoomIdentifier) -> RoomResult | RoomJoinError:
     user = get_user_from_request(request)
+    assert user
     rejoin_result = await handle_room_rejoin(user, lambda: create_room(request))
     if rejoin_result is not None:
         return rejoin_result
@@ -154,8 +181,8 @@ async def join_room(request: Request, response: Response, room_code: RoomIdentif
 
 
 @app.get("/user")
-async def get_user(request: Request, response: Response) -> LoggedInUser:
+async def get_user(request: Request, response: Response) -> LoggedInUser | APIError:
     user = get_user_from_request(request)
     if user is None:
-        return api_error(APIErrorType(message="Could not find user"), response)
+        return api_error(APIError(error_message="Could not find user"), response)
     return user
