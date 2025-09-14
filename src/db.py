@@ -1,6 +1,8 @@
+from collections import defaultdict
 import sqlite3
 
 from models.generic import LoggedInUser
+from typing import Any, DefaultDict
 
 DB = sqlite3.connect("./db/draaft.db")
 cur = DB.cursor()
@@ -67,3 +69,20 @@ def get_user(username: str, uuid: str) -> LoggedInUser | None:
         cur.execute("UPDATE users SET username = ? WHERE uuid = ?", (username, uuid))
         DB.commit()
     return LoggedInUser(username=username, uuid=uuid, room_code=room_code)
+
+class UUIDState:
+    def __init__(self):
+        self.connections = 0
+memory_db: DefaultDict[str, UUIDState] = defaultdict(lambda: UUIDState())
+
+class PopulatedUser:
+    def __init__(self, user: LoggedInUser):
+        self.source = user
+        self.uuid = user.uuid
+        self.state = memory_db[self.uuid]
+def populated_user(user: LoggedInUser) -> PopulatedUser:
+    return PopulatedUser(user)
+
+def update_user(user: LoggedInUser, key: str, value: Any):
+    cur.execute("UPDATE users SET ? = ? WHERE uuid = ?", (key, value, user.uuid))
+    DB.commit()

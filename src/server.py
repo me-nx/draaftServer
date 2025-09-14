@@ -3,7 +3,7 @@ import time
 from typing import Any, Callable, Coroutine
 
 import jwt
-from fastapi import FastAPI, Request, Response, status
+from fastapi import FastAPI, Request, Response, WebSocketDisconnect, status, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 
@@ -37,6 +37,14 @@ app = FastAPI()
 ################## Middlewares #####################
 
 
+def token_to_user(token: str) -> LoggedInUser:
+    payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    user = db.get_user(username=payload["username"], uuid=payload["uuid"])
+    if user is None:
+        raise RuntimeError('could not make user')
+    return user
+
+
 @app.middleware("http")
 async def check_valid(request: Request, call_next):
     request.state.valid_token = None
@@ -51,16 +59,17 @@ async def check_valid(request: Request, call_next):
     if request.url.path not in public_routes:
         token = request.headers.get("token")
         if not token:
-            return PlainTextResponse("bad request, sorry mate", status_code=403)
+            return PlainTextResponse("bad request, sorry mate :/", status_code=403)
         try:
-            payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+            user = token_to_user(token)
         except jwt.ExpiredSignatureError:
-            return PlainTextResponse("token expired", status_code=403)
+            return PlainTextResponse("token expired...", status_code=403)
         except jwt.InvalidTokenError:
-            return PlainTextResponse("invalid token", status_code=403)
+            return PlainTextResponse("invalid token >:|", status_code=403)
+        except RuntimeError:
+            return PlainTextResponse("server error :(", status_code=500)
         request.state.valid_token = token
-        request.state.logged_in_user = db.get_user(
-            username=payload["username"], uuid=payload["uuid"])
+        request.state.logged_in_user = user
 
     return await call_next(request)
 
@@ -77,12 +86,17 @@ app.add_middleware(
 
 if DEV_MODE_NO_AUTHENTICATE:
     @app.get("/authenticate")
-    async def authenticate_no_auth() -> AuthenticationResult:
+    async def authenticate_no_auth(uuid: str|None = None, username: str|None = None) -> AuthenticationResult:
+        if uuid is None:
+            # Look, it's simple and easy
+            uuid = 'uuid1a52730a4b4dadb7d1ea6' + rooms.generate_code()
+        if username is None:
+            username = 'tester' + rooms.generate_code()
         # JWT payload
         payload = {
-            "username": 'TesterName',
-            "uuid": 'uuid1a52730a4b4dadb7d1ea69617f3e',
-            "serverID": 'draaftServerID',
+            "username": username,
+            "uuid": uuid,
+            "serverID": 'draafttestserver',
             "iat": int(time.time()),
             "exp": int(time.time()) + 60 * 60 * 24  # 24 hours expiry
         }
@@ -186,3 +200,26 @@ async def get_user(request: Request, response: Response) -> LoggedInUser | APIEr
     if user is None:
         return api_error(APIError(error_message="Could not find user"), response)
     return user
+
+@app.websocket("/listen")
+async def websocket_endpoint(
+    *,
+    websocket: WebSocket,
+    token: str    
+):
+    print('Got a connect / listen call with a websocket')
+    user = token_to_user(token)
+    full_user = db.populated_user(user)
+    # Sane maximum
+    if full_user.state.connections >= 10:
+        raise RuntimeError("Max connections exceeded")
+    # Do not increase connections until accept() succeeds
+    await websocket.accept()
+    full_user.state.connections += 1
+    try:
+        while True:
+            data = await websocket.receive_text()
+            print(data)
+            await websocket.send_text('yeah got ur message' + data)
+    except WebSocketDisconnect:
+        pass
