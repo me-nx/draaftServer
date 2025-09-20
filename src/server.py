@@ -15,6 +15,7 @@ from models.api import (APIError, APIErrorType, AuthenticationFailure,
 from models.generic import LoggedInUser, MojangInfo
 from models.room import (Room, RoomIdentifier, RoomJoinError, RoomJoinState,
                          RoomResult)
+from models.ws import WebSocketMessage
 from utils import get_user_from_request, validate_mojang_session
 import sys
 
@@ -22,7 +23,7 @@ setup_sqlite()
 
 JWT_SECRET = secrets.token_urlsafe(32)
 JWT_ALGORITHM = "HS256"
-DEV_MODE_NO_AUTHENTICATE = True
+DEV_MODE_NO_AUTHENTICATE = False
 
 if DEV_MODE_NO_AUTHENTICATE and 'dev' not in sys.argv:
     raise RuntimeError(f'Do not deploy without setting dev mode to False!')
@@ -219,7 +220,10 @@ async def websocket_endpoint(
     try:
         while True:
             data = await websocket.receive_text()
-            print(data)
-            await websocket.send_text('yeah got ur message' + data)
+            message = WebSocketMessage.deserialize(data)
+            if message is not None:
+                await websocket.send_text('{"status": "success"}')
+            else:
+                await websocket.send_text('{"status": "error"}')
     except WebSocketDisconnect:
-        pass
+        full_user.state.connections -= 1
