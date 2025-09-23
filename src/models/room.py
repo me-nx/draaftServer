@@ -25,6 +25,7 @@ class RoomIdentifier(BaseModel):
 
 class RoomResult(RoomIdentifier):
     state: RoomJoinState
+    members: list[str]
 
 
 class RoomJoinError(APIError):

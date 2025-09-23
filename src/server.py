@@ -144,8 +144,8 @@ async def handle_room_rejoin(user: LoggedInUser, cb: Callable[[], Coroutine[Any,
         if user.uuid in room.members:
             return None  # User is still in room. Shouldn't happen, but just in case
         if user.uuid == room.admin:
-            return RoomResult(code=room.code, state=RoomJoinState.rejoined_as_admin)
-        return RoomResult(code=room.code, state=RoomJoinState.rejoined)
+            return RoomResult(code=room.code, state=RoomJoinState.rejoined_as_admin, members=list(room.members))
+        return RoomResult(code=room.code, state=RoomJoinState.rejoined, members=list(room.members))
     return None
 
 
@@ -174,7 +174,7 @@ async def create_room(request: Request) -> RoomResult:
     if rejoin_result is not None:
         return rejoin_result
     room_code = rooms.create(user.uuid)
-    return RoomResult(code=room_code, state=RoomJoinState.created)
+    return RoomResult(code=room_code, state=RoomJoinState.created, members=[user.uuid])
 
 
 @app.post("/room/join")
@@ -184,7 +184,8 @@ async def join_room(request: Request, response: Response, room_code: RoomIdentif
     rejoin_result = await handle_room_rejoin(user, lambda: create_room(request))
     if rejoin_result is not None:
         return rejoin_result
-    if rooms.get_room_from_code(room_code.code) is None:
+    room = rooms.get_room_from_code(room_code.code)
+    if room is None:
         return api_error(RoomJoinError(error_message=f"no such room: {room_code.code}"), response)
     # User can join this room!
     user.room_code = room_code.code
@@ -192,7 +193,7 @@ async def join_room(request: Request, response: Response, room_code: RoomIdentif
     if not addUserAttempt:
         # At some point we might want to differentiate these errors (i.e. room full vs other)
         return api_error(RoomJoinError(error_message=f"could not add user to room: {room_code.code}"), response)
-    return RoomResult(code=room_code.code, state=RoomJoinState.joined)
+    return RoomResult(code=room_code.code, state=RoomJoinState.joined, members=list(room.members))
 
 
 @app.get("/user")

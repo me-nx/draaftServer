@@ -13,6 +13,12 @@ class RoomAction(BaseModel):
     variant: Literal['roomaction']
     action: RoomActionEnum
 
+class RoomStatus(BaseModel):
+    variant: Literal['roomdata']
+    players: list[str] # list of player usernames
+    admin: str # username of admin player
+
+# Received by the server, so RoomStatus is not valid (we only send those)
 class WebSocketMessage(BaseModel):
     message: Union[Heartbeat, RoomAction] = Field(discriminator='variant')
 
@@ -24,3 +30,6 @@ class WebSocketMessage(BaseModel):
             return WebSocketMessage(message=json.loads(data))
         except Exception as e:
             print(f'Warning: Got a bad deserialize: {e}')
+
+def serialize(rs: RoomStatus):
+    return rs.model_dump_json()
