@@ -28,6 +28,10 @@ DEV_MODE_NO_AUTHENTICATE = False
 if DEV_MODE_NO_AUTHENTICATE and 'dev' not in sys.argv:
     raise RuntimeError(f'Do not deploy without setting dev mode to False!')
 
+def nolog(*_, **__):
+    pass
+LOG = print
+
 # https://pyjwt.readthedocs.io/en/stable/
 # https://sessionserver.mojang.com/session/minecraft/hasJoined?username=DesktopFolder&serverId=draaft2025server
 
@@ -136,16 +140,20 @@ async def is_authenticated():
 
 async def handle_room_rejoin(user: LoggedInUser, cb: Callable[[], Coroutine[Any, Any, RoomResult]]) -> RoomResult | None:
     if user.room_code is not None:
+        LOG("User had room code...")
         room = rooms.get_room_from_code(user.room_code)
         if room is None:
             # Handle room timeout / deletion
+            LOG("...Room was timed out.")
             user.room_code = None
             return await cb()
-        if user.uuid in room.members:
-            return None  # User is still in room. Shouldn't happen, but just in case
+        # if user.uuid in room.members:
+        #     return None  # User is still in room. Shouldn't happen, but just in case
         if user.uuid == room.admin:
             return RoomResult(code=room.code, state=RoomJoinState.rejoined_as_admin, members=list(room.members))
         return RoomResult(code=room.code, state=RoomJoinState.rejoined, members=list(room.members))
+    else:
+        LOG("User did not have room code...")
     return None
 
 
@@ -183,7 +191,9 @@ async def join_room(request: Request, response: Response, room_code: RoomIdentif
     assert user
     rejoin_result = await handle_room_rejoin(user, lambda: create_room(request))
     if rejoin_result is not None:
+        LOG("Got rejoin result:", rejoin_result)
         return rejoin_result
+    LOG("Fresh room join from user", user.username)
     room = rooms.get_room_from_code(room_code.code)
     if room is None:
         return api_error(RoomJoinError(error_message=f"no such room: {room_code.code}"), response)
@@ -209,6 +219,7 @@ async def websocket_endpoint(
     websocket: WebSocket,
     token: str    
 ):
+    from handlers import handle_websocket_message
     print('Got a connect / listen call with a websocket')
     user = token_to_user(token)
     full_user = db.populated_user(user)
@@ -223,7 +234,7 @@ async def websocket_endpoint(
             data = await websocket.receive_text()
             message = WebSocketMessage.deserialize(data)
             if message is not None:
-                await websocket.send_text('{"status": "success"}')
+                await handle_websocket_message(websocket, message, full_user)
             else:
                 await websocket.send_text('{"status": "error"}')
     except WebSocketDisconnect:
