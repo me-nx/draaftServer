@@ -58,9 +58,22 @@ def add_room_member(room_code: str, uuid: str) -> bool:
 
 
 def remove_room_member(uuid: str) -> bool:
+    """
+    If a room member is the admin, we must destroy the room.
+    """
+    rm = get_room_from_uuid(uuid)
+    if rm is None:
+        return False # Some error!
     try:
-        cur.execute("UPDATE users SET room_code = NULL WHERE uuid = ?",
-                    (uuid,))
+        if rm.admin == uuid:
+            uuids = list(rm.members)
+            # Destroy the room
+            cur.execute("DELETE FROM rooms WHERE code = ?", (rm.code,))
+        else:
+            uuids = [uuid]
+        fmt = ",".join("?" * len(uuids))
+        cur.execute(f"UPDATE users SET room_code = NULL WHERE uuid IN ({fmt})",
+                    uuids)
         DB.commit()
         return True
     except IntegrityError:
@@ -74,3 +87,10 @@ def get_user_room_code(uuid: str) -> str | None:
     if not res or res[0][0] is None:
         return None
     return res[0][0]
+
+
+def get_room_from_uuid(uuid: str) -> Room | None:
+    code = get_user_room_code(uuid)    
+    if code is None:
+        return None
+    return get_room_from_code(code)

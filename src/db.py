@@ -4,6 +4,8 @@ import sqlite3
 from models.generic import LoggedInUser
 from typing import Any, DefaultDict
 
+from models.room import Room
+
 DB = sqlite3.connect("./db/draaft.db")
 cur = DB.cursor()
 
@@ -80,6 +82,15 @@ class PopulatedUser:
         self.source = user
         self.uuid = user.uuid
         self.state = memory_db[self.uuid]
+
+    # Convenience method. Get the room that this user is in.
+    def get_room(self) -> Room | None:
+        from rooms import get_user_room_code, get_room_from_code
+        rc = get_user_room_code(self.uuid)
+        if rc is None:
+            return None
+        return get_room_from_code(rc)
+
 def populated_user(user: LoggedInUser) -> PopulatedUser:
     return PopulatedUser(user)
 

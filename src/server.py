@@ -1,3 +1,4 @@
+from collections import defaultdict
 import secrets
 import time
 from typing import Any, Callable, Coroutine
@@ -6,16 +7,17 @@ import jwt
 from fastapi import FastAPI, Request, Response, WebSocketDisconnect, status, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel
 
 import db
 import rooms
-from db import insert_user, setup_sqlite
+from db import PopulatedUser, insert_user, setup_sqlite
 from models.api import (APIError, APIErrorType, AuthenticationFailure,
                         AuthenticationResult, AuthenticationSuccess, api_error)
 from models.generic import LoggedInUser, MojangInfo
 from models.room import (Room, RoomIdentifier, RoomJoinError, RoomJoinState,
                          RoomResult)
-from models.ws import WebSocketMessage
+from models.ws import PlayerActionEnum, PlayerUpdate, RoomUpdate, RoomUpdateEnum, WebSocketMessage, serialize
 from utils import get_user_from_request, validate_mojang_session
 import sys
 
@@ -206,6 +208,48 @@ async def join_room(request: Request, response: Response, room_code: RoomIdentif
     return RoomResult(code=room_code.code, state=RoomJoinState.joined, members=list(room.members))
 
 
+@app.post("/room/leave")
+async def leave_room(request: Request):
+    user = get_user_from_request(request)
+    assert user
+    rm = rooms.get_user_room_code(user.uuid)
+    if rm is None:
+        LOG("Could not leave room - Room does not exist")
+        return
+    room = rooms.get_room_from_code(rm)
+    if room is None:
+        LOG(f"Error: Could not get room from id {rm}")
+        return
+    isadmin = room.admin == user.uuid
+    if isadmin:
+        await mg.broadcast_room(room, RoomUpdate(update=RoomUpdateEnum.closed))
+    else:
+        await mg.broadcast_room(room, PlayerUpdate(uuid=user.uuid, action=PlayerActionEnum.leave))
+    rooms.remove_room_member(user.uuid)
+
+
+class RoomManager:
+    def __init__(self):
+        self.users: defaultdict[str, set[WebSocket]] = defaultdict(lambda: set())
+
+    def subscribe(self, websocket: WebSocket, user: PopulatedUser):
+        self.users[user.uuid].add(websocket)
+
+    def unsubscribe(self, websocket: WebSocket, user: PopulatedUser):
+        self.users[user.uuid].remove(websocket)
+
+    async def broadcast_room(self, room: Room, data: BaseModel):
+        ser = serialize(data)
+        for m in room.members:
+            wso = self.users.get(m)
+            if wso is None:
+                continue
+            for ws in wso:
+                await ws.send_text(ser)
+
+mg = RoomManager()
+
+
 @app.get("/user")
 async def get_user(request: Request, response: Response) -> LoggedInUser | APIError:
     user = get_user_from_request(request)
@@ -223,12 +267,16 @@ async def websocket_endpoint(
     print('Got a connect / listen call with a websocket')
     user = token_to_user(token)
     full_user = db.populated_user(user)
+    room = full_user.get_room()
+    if room is None:
+        return # User must be in a room to be listening for updates.
     # Sane maximum
     if full_user.state.connections >= 10:
         raise RuntimeError("Max connections exceeded")
     # Do not increase connections until accept() succeeds
     await websocket.accept()
     full_user.state.connections += 1
+    mg.subscribe(websocket, full_user)
     try:
         while True:
             data = await websocket.receive_text()
@@ -239,3 +287,5 @@ async def websocket_endpoint(
                 await websocket.send_text('{"status": "error"}')
     except WebSocketDisconnect:
         full_user.state.connections -= 1
+    finally:
+        mg.unsubscribe(websocket, full_user)

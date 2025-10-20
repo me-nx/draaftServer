@@ -35,6 +35,18 @@ class PlayerAction(BaseModel):
     uuid: str
     action: PlayerActionEnum
 
+class PlayerUpdate(BaseModel):
+    variant: Literal['playerupdate'] = 'playerupdate'
+    uuid: str
+    action: PlayerActionEnum
+
+class RoomUpdateEnum(str, Enum):
+    closed = 'closed'
+
+class RoomUpdate(BaseModel):
+    variant: Literal['roomupdate'] = 'roomupdate'
+    update: RoomUpdateEnum
+
 class RoomStatus(BaseModel):
     variant: Literal['roomdata'] = 'roomdata'
     players: list[str] # list of player usernames
