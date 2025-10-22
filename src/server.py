@@ -1,4 +1,5 @@
 from collections import defaultdict
+from random import random, choice
 import secrets
 import time
 from typing import Any, Callable, Coroutine
@@ -26,7 +27,10 @@ setup_sqlite()
 JWT_SECRET = secrets.token_urlsafe(32)
 JWT_ALGORITHM = "HS256"
 DEV_MODE_NO_AUTHENTICATE = False
+DEV_MODE_WEIRD_ENDPOINTS = True
 
+if DEV_MODE_WEIRD_ENDPOINTS and 'dev' not in sys.argv:
+    raise RuntimeError(f'Do not deploy without setting dev mode to False!')
 if DEV_MODE_NO_AUTHENTICATE and 'dev' not in sys.argv:
     raise RuntimeError(f'Do not deploy without setting dev mode to False!')
 
@@ -90,6 +94,8 @@ app.add_middleware(
 
 
 ################### Routes #####################
+def make_fake_user(uuid: str, username: str):
+    insert_user(username=username, uuid=uuid)
 
 if DEV_MODE_NO_AUTHENTICATE:
     @app.get("/authenticate")
@@ -110,7 +116,7 @@ if DEV_MODE_NO_AUTHENTICATE:
 
         token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
         # add user to db if not exists
-        insert_user(username=payload['username'], uuid=payload['uuid'])
+        make_fake_user(payload['uuid'], payload['username'])
         return AuthenticationSuccess(token=token)
 else:
     @app.post("/authenticate")
@@ -227,6 +233,31 @@ async def leave_room(request: Request):
         await mg.broadcast_room(room, PlayerUpdate(uuid=user.uuid, action=PlayerActionEnum.leave))
     rooms.remove_room_member(user.uuid)
 
+@app.post("/room/kick")
+async def kick_room(request: Request, member: str):
+    user = get_user_from_request(request)
+    assert user
+    rm = rooms.get_user_room_code(user.uuid)
+    if rm is None:
+        LOG("Could not kick from room - Room does not exist")
+        return
+    room = rooms.get_room_from_code(rm)
+    if room is None:
+        LOG(f"Error: Could not get room from id {rm}")
+        return
+    isadmin = room.admin == user.uuid
+    if not isadmin or member == user.uuid:
+        # They are not the room admin, kick them.
+        # Alternatively, you can't kick yourself.
+        return
+    if member not in room.members:
+        # Member also just doesn't exist.
+        LOG("Could not kick from room - member is not in room.")
+        return
+    
+    await mg.broadcast_room(room, PlayerUpdate(uuid=member, action=PlayerActionEnum.kick))
+    rooms.remove_room_member(member)
+
 
 class RoomManager:
     def __init__(self):
@@ -289,3 +320,29 @@ async def websocket_endpoint(
         full_user.state.connections -= 1
     finally:
         mg.unsubscribe(websocket, full_user)
+
+# Development endpoints.
+if DEV_MODE_WEIRD_ENDPOINTS:
+    @app.post("/dev/adduser")
+    async def add_user(request: Request, response: Response):
+        user = get_user_from_request(request)
+        assert user
+        room = db.populated_user(user).get_room()
+        PAIRS = {
+                "f41c16957a9c4b0cbd2277a7e28c37a6": "PacManMVC",
+                "4326adfebd724170953fd8dabd660538": "Totorewa",
+        }
+        UUIDS = set(PAIRS.keys())
+        if room is None:
+            return
+        valid_users = UUIDS - room.members
+        if not valid_users:
+            LOG("No valid users left to add to the room.")
+            return
+        to_add: str = choice(list(valid_users))
+        make_fake_user(uuid=to_add, username=PAIRS[to_add])
+        if not rooms.add_room_member(room.code, to_add):
+            LOG("Failed to add made-up user")
+        new_room = rooms.get_room_from_code(room.code)
+        if new_room:
+            LOG("Updated members, now contains:", new_room.members)
