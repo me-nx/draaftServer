@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 import db
 import rooms
-from db import PopulatedUser, insert_user, setup_sqlite
+from db import PopulatedUser, get_admin_from_request, get_populated_user_from_request, get_user_status, insert_update_status, insert_user, populated_user, setup_sqlite
 from models.api import (APIError, APIErrorType, AuthenticationFailure,
                         AuthenticationResult, AuthenticationSuccess, api_error)
 from models.generic import LoggedInUser, MojangInfo
@@ -258,6 +258,27 @@ async def kick_room(request: Request, member: str):
     await mg.broadcast_room(room, PlayerUpdate(uuid=member, action=PlayerActionEnum.kick))
     rooms.remove_room_member(member)
 
+@app.post("/room/swapstatus")
+async def kick_room(request: Request, uuid: str):
+    ad = get_admin_from_request(request)
+    if ad is None:
+        return
+    _, r = ad
+
+    # actually important check!
+    if uuid not in r.members:
+        return
+
+    status = get_user_status(uuid)
+    LOG("Current user status:", status)
+    if status != "player":
+        status = "player"
+        await mg.update_status(r, uuid, PlayerActionEnum.player)
+    else:
+        status = "spectate"
+        await mg.update_status(r, uuid, PlayerActionEnum.spectate)
+    insert_update_status(uuid, status)
+
 
 class RoomManager:
     def __init__(self):
@@ -277,6 +298,25 @@ class RoomManager:
                 continue
             for ws in wso:
                 await ws.send_text(ser)
+
+    async def send_ws(self, ws: WebSocket, data: BaseModel):
+        await ws.send_text(serialize(data))
+
+    async def add_user(self, room: Room, user: str):
+        if not rooms.add_room_member(room.code, user):
+            return False
+        await self.broadcast_room(room, PlayerUpdate(uuid=user, action=PlayerActionEnum.joined))
+        return True
+
+    async def update_status(self, room: Room, user: str, status: PlayerActionEnum):
+        await self.broadcast_room(room, PlayerUpdate(uuid=user, action=status))
+
+    async def send_join(self, ws: WebSocket, room: Room):
+        # Send any information that wasn't initially sent.
+        for m in room.members:
+            if get_user_status(m) != "player":
+                await self.send_ws(ws, PlayerUpdate(uuid=m, action=PlayerActionEnum.spectate))
+
 
 mg = RoomManager()
 
@@ -308,6 +348,7 @@ async def websocket_endpoint(
     await websocket.accept()
     full_user.state.connections += 1
     mg.subscribe(websocket, full_user)
+    await mg.send_join(websocket, room)
     try:
         while True:
             data = await websocket.receive_text()
@@ -331,6 +372,16 @@ if DEV_MODE_WEIRD_ENDPOINTS:
         PAIRS = {
                 "f41c16957a9c4b0cbd2277a7e28c37a6": "PacManMVC",
                 "4326adfebd724170953fd8dabd660538": "Totorewa",
+                "9038803187de426fbc4eea42e19c68ef": "me_nx",
+                "810ad7db704a46039dd3eaacd2908553": "Memerson",
+                "9a8e24df4c8549d696a6951da84fa5c4": "Feinberg",
+                "562a308be86c4ec09438387860e792cc": "Oxidiot",
+                "c17fdba3b5ee46179131c5b547069477": "Rejid",
+                "dc2fe0a1c03647778ee98b80e53397a0": "CrazySMC",
+                "afecd7c643b54d8a8a32b42a0db53418": "DoyPingu",
+                "754f6771eeca46f3b4f293e90a8df75c": "coosh02",
+                "c81a44e0c18544c29d1a93e0362b7777": "Snakezy",
+                "4129d8d1aafb4e73b97b9999db248060": "CroProYT",
         }
         UUIDS = set(PAIRS.keys())
         if room is None:
@@ -341,8 +392,21 @@ if DEV_MODE_WEIRD_ENDPOINTS:
             return
         to_add: str = choice(list(valid_users))
         make_fake_user(uuid=to_add, username=PAIRS[to_add])
-        if not rooms.add_room_member(room.code, to_add):
+        if not await mg.add_user(room, to_add):
             LOG("Failed to add made-up user")
         new_room = rooms.get_room_from_code(room.code)
         if new_room:
             LOG("Updated members, now contains:", new_room.members)
+
+    @app.post("/dev/kickself")
+    async def kick_self(request: Request, response: Response):
+        user = get_user_from_request(request)
+        assert user
+        room = db.populated_user(user).get_room()
+        if room is None:
+            return
+        if room.admin != user.uuid:
+            return
+        await mg.broadcast_room(room, PlayerUpdate(uuid=user.uuid, action=PlayerActionEnum.kick))
+        # do nothing on backend. just broadcast the info...
+        # rooms.remove_room_member(member)

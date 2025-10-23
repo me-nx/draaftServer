@@ -4,6 +4,7 @@ from db import PopulatedUser
 from models.ws import NON_ADMIN_PLAYER_ACTIONS, ActionError, PlayerAction, PlayerActionEnum, WebSocketMessage, serialize
 from rooms import get_room_from_code, get_user_room_code
 
+## NOT USING ANY OF THIS CODE LOL
 async def handle_playeraction(websocket: WebSocket, msg: PlayerAction, user: PopulatedUser):
     code = get_user_room_code(user.uuid)
     if code is None:

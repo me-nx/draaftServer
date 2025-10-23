@@ -27,8 +27,9 @@ class PlayerActionEnum(str, Enum):
     leave = 'leave'
     spectate = 'spectate'
     player = 'player'
+    joined = 'joined'
 
-NON_ADMIN_PLAYER_ACTIONS = ['leave']
+NON_ADMIN_PLAYER_ACTIONS = ['leave', 'joined']
 
 class PlayerAction(BaseModel):
     variant: Literal['playeraction']
